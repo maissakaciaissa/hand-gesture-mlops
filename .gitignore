@@ -1,0 +1,20 @@
+﻿# data
+data/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# models
+*.pth
+*.pt
+
+# notebooks
+.ipynb_checkpoints/
+
+# env
+.env
+
+# OS
+.DS_Store
