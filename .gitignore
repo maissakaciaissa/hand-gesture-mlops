@@ -8,6 +8,7 @@ __pycache__/
 
 # models
 *.pth
+!src/output/model.pth
 *.pt
 
 # notebooks
