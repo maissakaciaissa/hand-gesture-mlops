@@ -6,12 +6,19 @@ sys.path.append(str(Path(__file__).resolve().parent.parent / "src"))
 
 from predict import GesturePredictor
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from PIL import Image, UnidentifiedImageError
 import io
 
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 app = FastAPI(title="Hand Gesture Recognition API")
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter # attach the limiter to the app state
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler) # when someone exceeds the rate limit, return a 429 response
 
 predictor = GesturePredictor(model_path="src/output/model.pth")
 
@@ -24,7 +31,8 @@ def root():
 
 
 @app.post("/predict")
-async def predict(file: UploadFile = File(...)):
+@limiter.limit("10/minute")
+async def predict(request: Request, file: UploadFile = File(...)):
     # 1. Check content type
     if file.content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(

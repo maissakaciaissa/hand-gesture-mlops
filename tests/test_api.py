@@ -34,3 +34,23 @@ def test_predict_rejects_corrupted_image():
         files={"file": ("fake.png", b"this is not really a png", "image/png")},
     )
     assert response.status_code == 400
+
+def test_rate_limit_exceeded():
+    from api.main import limiter
+    limiter.reset()  # clear any previous request counts before this test
+
+    with open("data/frame_09_01_0025.png", "rb") as f:
+        file_bytes = f.read()
+
+    for _ in range(10):
+        response = client.post(
+            "/predict",
+            files={"file": ("frame_09_01_0025.png", file_bytes, "image/png")},
+        )
+        assert response.status_code == 200
+
+    response = client.post(
+        "/predict",
+        files={"file": ("frame_09_01_0025.png", file_bytes, "image/png")},
+    )
+    assert response.status_code == 429
