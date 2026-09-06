@@ -16,3 +16,25 @@ jobs:
 
       - name: Build Docker image
         run: docker build -t hand-gesture-api .
+    
+      - name: Run container
+        run: docker run -d -p 8000:8000 --name test-container hand-gesture-api
+
+      - name: Wait for API to be ready
+        run: |
+          for i in {1..15}; do
+            curl -sf http://localhost:8000/ && break
+            echo "Waiting for API..."
+            sleep 2
+          done
+
+      - name: Smoke test /predict endpoint
+        run: |
+          curl -sf -X POST http://localhost:8000/predict \
+            -F "file=@data/frame_09_01_0025.png" \
+            | tee response.json
+          grep -q "label" response.json
+
+      - name: Stop container
+        if: always()
+        run: docker stop test-container
