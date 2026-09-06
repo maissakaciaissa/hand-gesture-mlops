@@ -3,7 +3,9 @@ import requests
 from PIL import Image
 import io
 
-API_URL = "http://127.0.0.1:8000/predict"
+import os
+
+API_URL = os.environ.get("API_URL", "http://127.0.0.1:8000/predict")
 
 st.set_page_config(page_title="Hand Gesture Recognition", page_icon="✋")
 
