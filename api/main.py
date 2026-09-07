@@ -14,7 +14,17 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
+from prometheus_fastapi_instrumentator import Instrumentator
+from prometheus_client import Counter
+
+
 app = FastAPI(title="Hand Gesture Recognition API")
+
+Instrumentator().instrument(app).expose(app)
+
+PREDICTION_COUNTER = Counter(
+    "gesture_predictions_total", "Total predictions made", ["label"]
+)
 
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter # attach the limiter to the app state
@@ -60,6 +70,7 @@ async def predict(request: Request, file: UploadFile = File(...)):
      # 4. Run prediction, catch unexpected model errors too
     try:
         result = predictor.predict(image)
+        PREDICTION_COUNTER.labels(label=result["label"]).inc()
     except Exception:
         raise HTTPException(status_code=500, detail="Prediction failed unexpectedly.")
 
