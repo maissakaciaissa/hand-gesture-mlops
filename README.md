@@ -1,16 +1,18 @@
 # Hand Gesture Recognition — MLOps Project
 
-A computer vision project that trains a CNN to classify hand gestures from the [LeapGestRecog](https://www.kaggle.com/datasets/gti-upm/leapgestrecog) dataset, serves it through a FastAPI endpoint, and wraps the whole thing in a working MLOps loop: experiment tracking, containerization, and CI/CD.
+A computer vision project that trains a CNN to classify hand gestures from the [LeapGestRecog](https://www.kaggle.com/datasets/gti-upm/leapgestrecog) dataset, serves it through a FastAPI endpoint with a Streamlit frontend, and wraps the whole thing in a full MLOps loop: experiment tracking, containerization, monitoring, and CI/CD.
 
-The focus wasn't just "train a model" — it's the full pipeline: data → training → diagnosis of overfitting → serving → packaging → automated testing.
+The focus wasn't just "train a model" — it's the full pipeline: data → training → diagnosis of overfitting → serving → hardening → packaging → monitoring → automated testing.
 
 ## Features
 
 - Custom CNN (PyTorch) trained on 20,000 grayscale hand images, 10 gesture classes
 - Subject-based train/val split (not random) to properly test generalization to unseen people
 - Data augmentation, batch normalization, weight decay, and LR scheduling to control overfitting
-- FastAPI backend serving predictions over HTTP
-- Dockerized application
+- FastAPI backend with input validation and rate limiting
+- Streamlit frontend for interactive predictions
+- Multi-container Docker Compose setup (API, UI, Prometheus, Grafana)
+- Live monitoring dashboard: request rate, latency, and prediction distribution by class
 - Experiment tracking and model registry with MLflow
 - Automated testing (pytest) and CI/CD (GitHub Actions): tests → Docker build → container smoke test, on every push
 
@@ -31,11 +33,15 @@ The focus wasn't just "train a model" — it's the full pipeline: data → train
               (GesturePredictor class)
                         |
                         v
-                  FastAPI (api/main.py)
-                     /predict
+              FastAPI (api/main.py)
+        /predict  ·  /metrics  ·  validation  ·  rate limiting
+                    |              |
+                    v              v
+          Streamlit frontend   Prometheus  -->  Grafana dashboard
                         |
                         v
-                  Docker container
+                  Docker Compose
+        (api · streamlit · prometheus · grafana)
                         |
                         v
               GitHub Actions CI/CD
@@ -56,10 +62,13 @@ hand-gesture-mlops/
 │       └── model.pth       # Trained weights + class list
 │
 ├── api/
-│   └── main.py             # FastAPI app, /predict endpoint
+│   └── main.py             # FastAPI app: /predict, /metrics, validation, rate limiting
+│
+├── streamlit_app.py         # Streamlit frontend calling the API
 │
 ├── tests/
-│   └── test_predict.py     # Unit tests for GesturePredictor + prediction correctness
+│   ├── test_predict.py     # Unit tests for GesturePredictor + prediction correctness
+│   └── test_api.py         # API tests: validation, rate limiting, end-to-end prediction
 │
 ├── data/
 │   └── *.png                # Sample images for local testing / CI smoke test
@@ -71,6 +80,8 @@ hand-gesture-mlops/
 │   └── docker-build.yml    # CI: pytest -> docker build -> smoke test
 │
 ├── Dockerfile
+├── docker-compose.yml       # api + streamlit + prometheus + grafana
+├── prometheus.yml           # Prometheus scrape config
 ├── .dockerignore
 ├── pyproject.toml / uv.lock # Dependency management (uv)
 └── README.md
@@ -94,6 +105,14 @@ Iterating on the model surfaced a real overfitting problem (near-perfect train a
 
 Full metrics and training curves are tracked in MLflow (`mlruns/`, `mlflow.db`).
 
+## API Hardening
+
+The `/predict` endpoint includes production-style safeguards beyond a bare model call:
+
+- **Input validation** — rejects unsupported file types, oversized uploads, and corrupted/non-image files with clean `400` responses instead of raw crashes
+- **Rate limiting** — capped at 10 requests per minute per client (via `slowapi`), returning a `429` when exceeded
+- **Error handling** — unexpected model failures return a clean `500` rather than a stack trace
+
 ## Running Locally
 
 **Install dependencies:**
@@ -110,20 +129,37 @@ uv run python src/predict.py path/to/image.png
 ```bash
 uv run uvicorn api.main:app --reload
 ```
-Then open `http://127.0.0.1:8000/docs` to try the `/predict` endpoint interactively.
+Open `http://127.0.0.1:8000/docs` to try `/predict` interactively.
+
+**Run the Streamlit frontend** (API must be running first):
+```bash
+uv run streamlit run streamlit_app.py
+```
+Open `http://localhost:8501`.
 
 **Run tests:**
 ```bash
 uv run pytest
 ```
 
-## Running with Docker
+## Running with Docker Compose
 
+Runs the full stack — API, Streamlit UI, Prometheus, and Grafana — together:
 ```bash
-docker build -t hand-gesture-api .
-docker run -p 8000:8000 hand-gesture-api
+docker-compose up --build
 ```
-API available at `http://127.0.0.1:8000`.
+
+| Service    | URL                          |
+|------------|-------------------------------|
+| API        | http://localhost:8000/docs   |
+| Streamlit  | http://localhost:8501        |
+| Prometheus | http://localhost:9090        |
+| Grafana    | http://localhost:3000 (admin/admin) |
+
+In Grafana, add Prometheus as a data source (`http://prometheus:9090`) and build panels against:
+- `gesture_predictions_total` — predictions by gesture class
+- `rate(http_requests_total[1m])` — request rate
+- `rate(http_request_duration_seconds_sum[1m]) / rate(http_request_duration_seconds_count[1m])` — average latency
 
 ## Experiment Tracking (MLflow)
 
@@ -131,14 +167,14 @@ Training runs (params, metrics, model artifacts) are logged with MLflow. To view
 ```bash
 uv run mlflow ui --backend-store-uri sqlite:///mlflow.db --default-artifact-root file:./mlruns
 ```
-Then open `http://127.0.0.1:5000`.
+Open `http://127.0.0.1:5000`.
 
 The best model is registered in the MLflow Model Registry as `hand-gesture-cnn`.
 
 ## CI/CD
 
 Every push to `main` triggers a GitHub Actions workflow:
-1. **Test** — installs dependencies, runs `pytest`
+1. **Test** — installs dependencies, runs `pytest` (model logic + API validation + rate limiting)
 2. **Build** — builds the Docker image
 3. **Smoke test** — runs the container, sends a real image to `/predict`, verifies a valid response
 
@@ -146,4 +182,4 @@ If tests fail, the Docker build is skipped entirely — fast feedback before the
 
 ## Tech Stack
 
-PyTorch · OpenCV · FastAPI · Docker · MLflow · GitHub Actions · pytest · uv
+PyTorch · OpenCV · FastAPI · Streamlit · slowapi · Docker · Docker Compose · Prometheus · Grafana · MLflow · GitHub Actions · pytest · uv
